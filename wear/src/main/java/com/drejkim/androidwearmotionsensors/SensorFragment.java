@@ -9,10 +9,23 @@ import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
 import android.os.Bundle;
 import android.util.FloatMath;
+import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.Button;
 import android.widget.TextView;
+
+import com.google.android.gms.common.ConnectionResult;
+import com.google.android.gms.common.GooglePlayServicesClient;
+import com.google.android.gms.common.api.GoogleApiClient;
+import com.google.android.gms.common.api.PendingResult;
+import com.google.android.gms.wearable.DataApi;
+import com.google.android.gms.wearable.PutDataMapRequest;
+import com.google.android.gms.wearable.PutDataRequest;
+import com.google.android.gms.wearable.Wearable;
+
+import java.util.ArrayList;
 
 public class SensorFragment extends Fragment implements SensorEventListener {
 
@@ -30,6 +43,18 @@ public class SensorFragment extends Fragment implements SensorEventListener {
     private long mShakeTime = 0;
     private long mRotationTime = 0;
 
+    private Button startButton;
+    private Button stopButton;
+    private boolean isMeasuring = false;
+    private GoogleApiClient mGoogleApiClient;
+
+    private static final String COUNT_KEY = "com.example.key.count";
+    private int count = 0;
+
+    private static final String TAG = "SensorFragment";
+
+    private ArrayList<String> accelerometerData;
+
     public static SensorFragment newInstance(int sensorType) {
         SensorFragment f = new SensorFragment();
 
@@ -44,6 +69,8 @@ public class SensorFragment extends Fragment implements SensorEventListener {
     @Override public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
+        accelerometerData = new ArrayList<String>();
+
         Bundle args = getArguments();
         if(args != null) {
             mSensorType = args.getInt("sensorType");
@@ -51,7 +78,50 @@ public class SensorFragment extends Fragment implements SensorEventListener {
 
         mSensorManager = (SensorManager) getActivity().getSystemService(Context.SENSOR_SERVICE);
         mSensor = mSensorManager.getDefaultSensor(mSensorType);
+
     }
+
+    private void initButtons()
+    {
+        startButton.setOnClickListener( new View.OnClickListener(){
+
+            @Override
+            public void onClick(View v) {
+                isMeasuring = true;
+            }
+        });
+
+        stopButton.setOnClickListener( new View.OnClickListener(){
+
+            @Override
+            public void onClick(View v) {
+                isMeasuring = false;
+            }
+        });
+    }
+
+
+    public void sendData()
+    {
+        if(accelerometerData.size() < 200) return;
+
+        Log.i(TAG, "Sending data!");
+        Log.i(TAG, "Connected? " + mGoogleApiClient.isConnected());
+
+        if(mGoogleApiClient.isConnected())
+        {
+            PutDataMapRequest putDataMapReq = PutDataMapRequest.create("/count");
+            putDataMapReq.getDataMap().putStringArrayList(COUNT_KEY, accelerometerData);
+
+            PutDataRequest putDataReq = putDataMapReq.asPutDataRequest();
+            PendingResult<DataApi.DataItemResult> pendingResult = Wearable.DataApi.putDataItem(mGoogleApiClient, putDataReq);
+            Log.i(TAG, pendingResult.toString());
+        }
+
+        accelerometerData.clear();
+    }
+
+
 
     @Override
     public View onCreateView(LayoutInflater inflater, ViewGroup container,
@@ -63,13 +133,43 @@ public class SensorFragment extends Fragment implements SensorEventListener {
         mTextTitle.setText(mSensor.getStringType());
         mTextValues = (TextView) mView.findViewById(R.id.text_values);
 
+
+        mGoogleApiClient = new GoogleApiClient.Builder(mView.getContext())
+                .addConnectionCallbacks(new GoogleApiClient.ConnectionCallbacks() {
+                    @Override
+                    public void onConnected(Bundle connectionHint) {
+                        Log.d(TAG, "onConnected: " + connectionHint);
+                        // Now you can use the Data Layer API
+                    }
+
+                    @Override
+                    public void onConnectionSuspended(int cause) {
+                        Log.d(TAG, "onConnectionSuspended: " + cause);
+                    }
+                })
+                .addOnConnectionFailedListener(new GoogleApiClient.OnConnectionFailedListener() {
+                    @Override
+                    public void onConnectionFailed(ConnectionResult result) {
+                        Log.d(TAG, "onConnectionFailed: " + result);
+                    }
+                })
+                // Request access only to the Wearable API
+                .addApi(Wearable.API)
+                .build();
+
+        mGoogleApiClient.connect();
+
+        startButton = (Button) mView.findViewById(R.id.startButton);
+        stopButton = (Button) mView.findViewById(R.id.stopButton);
+        initButtons();
+
         return mView;
     }
 
     @Override
     public void onResume() {
         super.onResume();
-        mSensorManager.registerListener(this, mSensor, SensorManager.SENSOR_DELAY_NORMAL);
+        mSensorManager.registerListener(this, mSensor, SensorManager.SENSOR_DELAY_GAME);
     }
 
     @Override
@@ -80,23 +180,32 @@ public class SensorFragment extends Fragment implements SensorEventListener {
 
     @Override
     public void onSensorChanged(SensorEvent event) {
-        // If sensor is unreliable, then just return
-        if (event.accuracy == SensorManager.SENSOR_STATUS_UNRELIABLE)
+
+        if(isMeasuring)
         {
-            return;
-        }
+            // If sensor is unreliable, then just return
+            if (event.accuracy == SensorManager.SENSOR_STATUS_UNRELIABLE)
+            {
+                return;
+            }
 
-        mTextValues.setText(
-                "x = " + Float.toString(event.values[0]) + "\n" +
-                "y = " + Float.toString(event.values[1]) + "\n" +
-                "z = " + Float.toString(event.values[2]) + "\n"
-        );
+            // Show this on the watch face
+            mTextValues.setText(
+                    "x = " + Float.toString(event.values[0]) + "\n" +
+                            "y = " + Float.toString(event.values[1]) + "\n" +
+                            "z = " + Float.toString(event.values[2]) + "\n"
+            );
 
-        if(event.sensor.getType() == Sensor.TYPE_ACCELEROMETER) {
-            detectShake(event);
+            if(event.sensor.getType() == Sensor.TYPE_ACCELEROMETER) {
+                detectShake(event);
+            }
+            else if(event.sensor.getType() == Sensor.TYPE_GYROSCOPE) {
+                detectRotation(event);
+            }
         }
-        else if(event.sensor.getType() == Sensor.TYPE_GYROSCOPE) {
-            detectRotation(event);
+        else
+        {
+           // Log.i(TAG, "Not measuring data!");
         }
     }
 
@@ -112,6 +221,14 @@ public class SensorFragment extends Fragment implements SensorEventListener {
     private void detectShake(SensorEvent event) {
         long now = System.currentTimeMillis();
 
+        float gX = event.values[0] / SensorManager.GRAVITY_EARTH;
+        float gY = event.values[1] / SensorManager.GRAVITY_EARTH;
+        float gZ = event.values[2] / SensorManager.GRAVITY_EARTH;
+
+        accelerometerData.add(System.currentTimeMillis() + "," + gX + "," + gY + "," + gZ);
+        sendData();
+
+        /*
         if((now - mShakeTime) > SHAKE_WAIT_TIME_MS) {
             mShakeTime = now;
 
@@ -119,8 +236,11 @@ public class SensorFragment extends Fragment implements SensorEventListener {
             float gY = event.values[1] / SensorManager.GRAVITY_EARTH;
             float gZ = event.values[2] / SensorManager.GRAVITY_EARTH;
 
+
+
             // gForce will be close to 1 when there is no movement
             float gForce = FloatMath.sqrt(gX*gX + gY*gY + gZ*gZ);
+            System.out.println(gForce);
 
             // Change background color if gForce exceeds threshold;
             // otherwise, reset the color
@@ -131,6 +251,7 @@ public class SensorFragment extends Fragment implements SensorEventListener {
                 mView.setBackgroundColor(Color.BLACK);
             }
         }
+        */
     }
 
     private void detectRotation(SensorEvent event) {

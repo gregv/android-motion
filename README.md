@@ -1,3 +1,6 @@
+This project was modified to record motion from an Android Wear Watch, send that data to an Android phone, then have the phone send the data to a local Splunk server.
+
+
 # Android Wear Motion Sensors
 
 This project demonstrates the use of the accelerometer and gyroscope sensors on an Android Wear device. It displays the raw values for each sensor on its own page. It also performs simple shake and rotation detection using the accelerometer and gyroscope, respectively; when a shake or a rotation is detected, the background color changes to green.
